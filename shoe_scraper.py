@@ -45,7 +45,7 @@ async def scrape_flipkart(query):
         await browser.close()
     return results
 
-# ---------------------- Myntra Scraper (Improved) ----------------------
+# ---------------------- Myntra Scraper (Stable) ----------------------
 async def scrape_myntra(query):
     results = []
     async with async_playwright() as p:
@@ -53,11 +53,11 @@ async def scrape_myntra(query):
         page = await browser.new_page()
 
         url = f"https://www.myntra.com/{query.replace(' ', '-')}"
-        await page.goto(url, timeout=10000)
+        await page.goto(url, timeout=15000)
 
-        # Try to locate the __NEXT_DATA__ JSON (primary method)
         try:
-            script = await page.locator('script[id="__NEXT_DATA__"]').inner_text(timeout=5000)
+            # Try structured JSON first
+            script = await page.locator('script[id="__NEXT_DATA__"]').inner_text(timeout=7000)
             data = json.loads(script)
             products = data["props"]["pageProps"]["searchResults"]["products"]
             for p in products[:10]:
@@ -65,25 +65,30 @@ async def scrape_myntra(query):
                 price = p.get("price", {}).get("discounted", p.get("price", {}).get("mrp", "Price not found"))
                 link = "https://www.myntra.com" + p.get("landingPageUrl", "")
                 results.append(f"{title} - ₹{price} - {link}")
-        except Exception:
-            # Fallback: use visible product cards on the page
-            await page.wait_for_selector("li.product-base", timeout=5000)
-            items = page.locator("li.product-base")
-            count = min(10, await items.count())
-            for i in range(count):
-                try:
-                    title = await items.nth(i).locator(".product-product").inner_text(timeout=1000)
-                    brand = await items.nth(i).locator(".product-brand").inner_text(timeout=1000)
-                    price = await items.nth(i).locator(".product-price").inner_text(timeout=1000)
-                    results.append(f"{brand} {title} - {price}")
-                except:
-                    continue
+
+        except Exception as e_json:
+            # Fallback: use visible HTML
+            try:
+                await page.wait_for_selector("li.product-base", timeout=15000)
+                items = page.locator("li.product-base")
+                count = min(10, await items.count())
+                for i in range(count):
+                    try:
+                        brand = await items.nth(i).locator(".product-brand").inner_text(timeout=1000)
+                        title = await items.nth(i).locator(".product-product").inner_text(timeout=1000)
+                        price = await items.nth(i).locator(".product-price").inner_text(timeout=1000)
+                        results.append(f"{brand} {title} - {price}")
+                    except:
+                        continue
+            except Exception as e_html:
+                results.append(f"Myntra failed: {type(e_html).__name__}")
 
         if not results:
-            results.append("No Myntra results found (possibly blocked or empty page).")
+            results.append("No Myntra results found (blocked or no data).")
 
         await browser.close()
     return results
+
 
 # ---------------------- Ajio Scraper ----------------------
 async def scrape_ajio(query):
