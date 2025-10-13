@@ -118,26 +118,47 @@ async def scrape_ajio(query):
         await browser.close()
     return results
 
-# ---------------------- Amazon Scraper ----------------------
+# ---------------------- Amazon Scraper (Stable) ----------------------
 async def scrape_amazon(query):
     results = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
-        await page.goto(f"https://www.amazon.in/s?k={query.replace(' ', '+')}", timeout=10000)
 
-        products = page.locator("div.s-main-slot div[data-component-type='s-search-result']")
-        count = min(10, await products.count())
-        for i in range(count):
-            title = await products.nth(i).locator("h2 a span").inner_text(timeout=10000)
-            try:
-                price = await products.nth(i).locator(".a-price-whole").inner_text(timeout=10000)
-            except:
-                price = "Price not found"
-            url = await products.nth(i).locator("h2 a").get_attribute("href", timeout=10000)
-            results.append(f"{title} - ₹{price} - https://www.amazon.in{url}")
+        search_url = f"https://www.amazon.in/s?k={query.replace(' ', '+')}"
+        await page.goto(search_url, timeout=15000)
+
+        try:
+            # Wait for products to appear
+            await page.wait_for_selector("div.s-main-slot div[data-component-type='s-search-result']", timeout=10000)
+            products = page.locator("div.s-main-slot div[data-component-type='s-search-result']")
+            count = min(10, await products.count())
+
+            for i in range(count):
+                try:
+                    title = await products.nth(i).locator("h2 a span").inner_text(timeout=1000)
+                    price_el = products.nth(i).locator("span.a-price span.a-offscreen")
+                    price = await price_el.inner_text(timeout=1000) if await price_el.count() else "Price not found"
+                    link_el = products.nth(i).locator("h2 a")
+                    link = "https://www.amazon.in" + await link_el.get_attribute("href", timeout=1000)
+                    results.append(f"{title} - {price} - {link}")
+                except Exception:
+                    continue
+
+        except Exception as e_html:
+            # Fallback: no products found
+            content = await page.content()
+            if "captcha" in content.lower():
+                results.append("Amazon blocked this request (CAPTCHA shown).")
+            else:
+                results.append(f"Amazon failed: {type(e_html).__name__}")
+
+        if not results:
+            results.append("No Amazon results found (blocked or no data).")
+
         await browser.close()
     return results
+
 
 # ---------------------- Send Email ----------------------
 def send_email(subject, content):
