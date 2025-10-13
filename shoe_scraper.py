@@ -34,7 +34,7 @@ websites = {
     "Flipkart": "https://www.flipkart.com/search?q={query}",
     "Myntra": "https://www.myntra.com/{query}",
     "Ajio": "https://www.ajio.com/search/?text={query}",
-    "Amazon": "https://www.amazon.in/s?k={query.replace(' ', '+')}"
+    "Amazon": "https://www.amazon.in/s?k={query}"
 }
 
 # --------------------------
@@ -94,7 +94,8 @@ async def main():
         for shoe in shoes:
             summary += f"\n=== {shoe} ===\n"
             for site, url_template in websites.items():
-                url = url_template.format(query=shoe.replace(" ", "+"))
+                query = shoe.replace(" ", "+")   # replace spaces here
+                url = url_template.format(query=query)
                 for size in sizes:
                     result = await scrape_shoe(page, url, shoe, size)
                     summary += f"{result}\n"
