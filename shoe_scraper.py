@@ -1,126 +1,128 @@
 import asyncio
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import json
+from playwright.async_api import async_playwright
 import os
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-# === CONFIG ===
+# Config
 SHOES = [
-    "Asics Novablast", "Asics Gel-nimbus", "Saucony kinvara",
-    "Saucony Tempus", "Saucony Endorphin", "Brooks Ghost",
-    "Brooks Adrenaline", "Brooks Glycerin", "Hoka Arahi", "Hoka Skyflow"
+    "Asics Novablast", "Asics Gel-Nimbus", "Saucony Kinvara", "Saucony Tempus",
+    "Saucony Endorphin", "Brooks Ghost", "Brooks Adrenaline", "Brooks Glycerin",
+    "Hoka Arahi", "Hoka Skyflow"
 ]
-
 SIZES = ["UK 8", "UK 8.5", "UK 9"]
 
-WEBSITES = {
-    "Flipkart": "https://www.flipkart.com/search?q={query}",
-    "Myntra": "https://www.myntra.com/{query}",
-    "Ajio": "https://www.ajio.com/search/?text={query}",
-    "Amazon": "https://www.amazon.in/s?k={query}"
-}
+EMAIL_FROM = "your_verified_sendgrid_email@example.com"
+EMAIL_TO = "your_gmail_here@gmail.com"
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")  # Set as secret in GitHub
 
-EMAIL_FROM = os.getenv("EMAIL_FROM")
-EMAIL_TO = os.getenv("EMAIL_TO")
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-
-# === SCRAPER FUNCTIONS ===
-async def scrape_flipkart(page, shoe, size):
-    url = WEBSITES["Flipkart"].format(query=shoe.replace(" ", "+"))
-    await page.goto(url)
-    await page.wait_for_timeout(2000)
-    try:
-        first_product = page.locator("a._1fQZEK").first
-        await first_product.click()
-        await page.wait_for_timeout(2000)
-        # Sizes buttons are often in '._23FHuj' or '._2Xfa2_'
-        size_button = page.locator(f"button[title='{size}']").first
-        await size_button.click(timeout=10000)
-        price = await page.locator("._30jeq3._16Jk6d").inner_text(timeout=10000)
-        return price
-    except PlaywrightTimeoutError:
-        return f"Error: Size {size} not found"
-
-async def scrape_myntra(page, shoe, size):
-    url = WEBSITES["Myntra"].format(query=shoe.replace(" ", "-").lower())
-    await page.goto(url)
-    await page.wait_for_timeout(2000)
-    try:
-        first_product = page.locator("li.product-base").first
-        await first_product.click()
-        await page.wait_for_timeout(2000)
-        # Price selector updated
-        price = await page.locator("span.pdp-price").inner_text(timeout=10000)
-        return price
-    except PlaywrightTimeoutError:
-        return f"Error: Price not found for {size}"
-
-async def scrape_ajio(page, shoe, size):
-    url = WEBSITES["Ajio"].format(query=shoe.replace(" ", "+"))
-    await page.goto(url)
-    await page.wait_for_timeout(2000)
-    try:
-        first_product = page.locator("div.prod-name").first
-        await first_product.click()
-        await page.wait_for_timeout(2000)
-        price = await page.locator("div.prod-sp").inner_text(timeout=10000)
-        return price
-    except PlaywrightTimeoutError:
-        return f"Error: Price not found for {size}"
-
-async def scrape_amazon(page, shoe, size):
-    url = WEBSITES["Amazon"].format(query=shoe.replace(" ", "+"))
-    await page.goto(url)
-    await page.wait_for_timeout(2000)
-    try:
-        first_product = page.locator("div.s-main-slot div[data-component-type='s-search-result']").first
-        await first_product.click()
-        await page.wait_for_timeout(2000)
-        # Size selection may vary, try approximate match
-        price = await page.locator("#priceblock_ourprice, #priceblock_dealprice").inner_text(timeout=10000)
-        return price
-    except PlaywrightTimeoutError:
-        return f"Error: Size {size} not found"
-
-SCRAPERS = {
-    "Flipkart": scrape_flipkart,
-    "Myntra": scrape_myntra,
-    "Ajio": scrape_ajio,
-    "Amazon": scrape_amazon
-}
-
-# === MAIN ===
-async def main():
-    results = {}
+# ---------------------- Flipkart Scraper ----------------------
+async def scrape_flipkart(query):
+    results = []
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
-        for shoe in SHOES:
-            results[shoe] = {}
-            for size in SIZES:
-                results[shoe][size] = {}
-                for site, scraper in SCRAPERS.items():
-                    try:
-                        price = await scraper(page, shoe, size)
-                        results[shoe][size][site] = price
-                    except Exception as e:
-                        results[shoe][size][site] = f"Error: {e}"
+        await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=10000)
+
+        # Extract JSON
+        content = await page.content()
+        start = content.find("window.__PRELOADED_STATE__ = ")
+        if start != -1:
+            start += len("window.__PRELOADED_STATE__ = ")
+            end = content.find("};", start) + 1
+            json_text = content[start:end]
+            data = json.loads(json_text)
+            try:
+                products = data['product']['products']  # Stable path
+                for p in products[:10]:
+                    title = p.get('title', 'No title')
+                    price = p.get('price', {}).get('value', 'Price not found')
+                    url = "https://www.flipkart.com" + p.get('url', '')
+                    results.append(f"{title} - ₹{price} - {url}")
+            except KeyError:
+                results.append("Could not extract products from JSON")
         await browser.close()
+    return results
 
-    # Prepare email content
-    content = ""
-    for shoe, sizes in results.items():
-        content += f"=== {shoe} ===\n"
-        for size, sites in sizes.items():
-            for site, price in sites.items():
-                content += f"{site} ({size}): {price}\n"
-        content += "\n"
+# ---------------------- Myntra Scraper ----------------------
+async def scrape_myntra(query):
+    results = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(f"https://www.myntra.com/{query.replace(' ', '-')}", timeout=10000)
 
-    # Send email
+        # Look for JSON in <script id="__NEXT_DATA__">
+        script = await page.locator('script[id="__NEXT_DATA__"]').inner_text(timeout=10000)
+        data = json.loads(script)
+        try:
+            products = data['props']['pageProps']['searchResults']['products']
+            for p in products[:10]:
+                title = p.get('productName', 'No title')
+                price = p.get('price', {}).get('mrp', 'Price not found')
+                url = "https://www.myntra.com" + p.get('landingPageUrl', '')
+                results.append(f"{title} - ₹{price} - {url}")
+        except KeyError:
+            results.append("Could not extract products from JSON")
+        await browser.close()
+    return results
+
+# ---------------------- Ajio Scraper ----------------------
+async def scrape_ajio(query):
+    results = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(f"https://www.ajio.com/search/?text={query}", timeout=10000)
+
+        # Extract products from JSON embedded in page
+        content = await page.content()
+        start = content.find("window.__INITIAL_STATE__ = ")
+        if start != -1:
+            start += len("window.__INITIAL_STATE__ = ")
+            end = content.find("};", start) + 1
+            json_text = content[start:end]
+            data = json.loads(json_text)
+            try:
+                products = data['search']['products']
+                for p in products[:10]:
+                    title = p.get('brand', '') + " " + p.get('name', '')
+                    price = p.get('price', {}).get('mrp', 'Price not found')
+                    url = "https://www.ajio.com" + p.get('url', '')
+                    results.append(f"{title} - ₹{price} - {url}")
+            except KeyError:
+                results.append("Could not extract products from JSON")
+        await browser.close()
+    return results
+
+# ---------------------- Amazon Scraper ----------------------
+async def scrape_amazon(query):
+    results = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(f"https://www.amazon.in/s?k={query.replace(' ', '+')}", timeout=10000)
+
+        products = page.locator("div.s-main-slot div[data-component-type='s-search-result']")
+        count = min(10, await products.count())
+        for i in range(count):
+            title = await products.nth(i).locator("h2 a span").inner_text(timeout=10000)
+            try:
+                price = await products.nth(i).locator(".a-price-whole").inner_text(timeout=10000)
+            except:
+                price = "Price not found"
+            url = await products.nth(i).locator("h2 a").get_attribute("href", timeout=10000)
+            results.append(f"{title} - ₹{price} - https://www.amazon.in{url}")
+        await browser.close()
+    return results
+
+# ---------------------- Send Email ----------------------
+def send_email(subject, content):
     message = Mail(
         from_email=EMAIL_FROM,
         to_emails=EMAIL_TO,
-        subject="Daily Shoe Price Report",
+        subject=subject,
         plain_text_content=content
     )
     try:
@@ -128,7 +130,28 @@ async def main():
         sg.send(message)
         print("Email sent successfully!")
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print("Error sending email:", e)
 
+# ---------------------- Main ----------------------
+async def main():
+    all_results = ""
+    for shoe in SHOES:
+        for size in SIZES:
+            query = f"{shoe} {size}"
+            all_results += f"\n=== {query} ===\n"
+
+            flipkart = await scrape_flipkart(query)
+            myntra = await scrape_myntra(query)
+            ajio = await scrape_ajio(query)
+            amazon = await scrape_amazon(query)
+
+            all_results += "Flipkart:\n" + "\n".join(flipkart) + "\n"
+            all_results += "Myntra:\n" + "\n".join(myntra) + "\n"
+            all_results += "Ajio:\n" + "\n".join(ajio) + "\n"
+            all_results += "Amazon:\n" + "\n".join(amazon) + "\n"
+
+    send_email("Daily Shoe Prices", all_results)
+
+# ---------------------- Run ----------------------
 if __name__ == "__main__":
     asyncio.run(main())
