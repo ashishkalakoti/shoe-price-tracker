@@ -6,6 +6,7 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 import logging
 import traceback
+import asyncio
 
 # ---------------------- Logging Setup ----------------------
 LOG_FILE = "shoe_scraper.log"
@@ -30,8 +31,6 @@ SHOES = [
     "Brooks Ghost",
     "Brooks Adrenaline",
     "Brooks Glycerin"
-    #"Hoka Arahi",
-    #"Hoka Skyflow"
 ]
 
 EMAIL_FROM = "ashishkalakoti@gmail.com"
@@ -41,12 +40,14 @@ SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")  # Set as secret in GitHub
 # ---------------------- Flipkart Scraper ----------------------
 async def scrape_flipkart(query):
     results = []
+    url = f"https://www.flipkart.com/search?q={query}"
     logger.info(f"Scraping Flipkart for query: {query}")
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
-            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=10000)
+            logger.debug(f"Opening URL: {url}")
+            await page.goto(url, timeout=25000)
 
             content = await page.content()
             start = content.find("window.__PRELOADED_STATE__ = ")
@@ -66,21 +67,22 @@ async def scrape_flipkart(query):
                     results.append("Could not extract products from JSON")
             await browser.close()
     except Exception as e:
-        logger.error(f"Flipkart error for {query}: {e}\n{traceback.format_exc()}")
+        logger.error(f"Flipkart failed for {query} at {url}: {type(e).__name__} - {e}")
+        logger.error(traceback.format_exc())
     logger.info(f"Flipkart results for {query}: {len(results)} items")
     return results
 
 # ---------------------- Myntra Scraper ----------------------
 async def scrape_myntra(query):
     results = []
+    url = f"https://www.myntra.com/{query.replace(' ', '-')}"
     logger.info(f"Scraping Myntra for query: {query}")
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
-
-            url = f"https://www.myntra.com/{query.replace(' ', '-')}"
-            await page.goto(url, timeout=15000)
+            logger.debug(f"Opening URL: {url}")
+            await page.goto(url, timeout=25000)
 
             try:
                 script = await page.locator('script[id="__NEXT_DATA__"]').inner_text(timeout=7000)
@@ -93,6 +95,7 @@ async def scrape_myntra(query):
                     results.append(f"{title} - ₹{price} - {link}")
 
             except Exception as e_json:
+                logger.warning(f"Myntra JSON parse failed for {query}: {e_json}")
                 try:
                     await page.wait_for_selector("li.product-base", timeout=15000)
                     items = page.locator("li.product-base")
@@ -107,20 +110,25 @@ async def scrape_myntra(query):
                             continue
                 except Exception as e_html:
                     results.append(f"Myntra failed: {type(e_html).__name__}")
+                    logger.error(f"Myntra HTML scrape failed for {query} at {url}: {type(e_html).__name__} - {e_html}")
+            await browser.close()
     except Exception as e:
-        logger.error(f"Myntra error for {query}: {e}\n{traceback.format_exc()}")
+        logger.error(f"Myntra failed for {query} at {url}: {type(e).__name__} - {e}")
+        logger.error(traceback.format_exc())
     logger.info(f"Myntra results for {query}: {len(results)} items")
     return results
 
 # ---------------------- Ajio Scraper ----------------------
 async def scrape_ajio(query):
     results = []
+    url = f"https://www.ajio.com/search/?text={query}"
     logger.info(f"Scraping Ajio for query: {query}")
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
-            await page.goto(f"https://www.ajio.com/search/?text={query}", timeout=10000)
+            logger.debug(f"Opening URL: {url}")
+            await page.goto(url, timeout=25000)
 
             content = await page.content()
             start = content.find("window.__INITIAL_STATE__ = ")
@@ -140,9 +148,11 @@ async def scrape_ajio(query):
                     results.append("Could not extract products from JSON")
             await browser.close()
     except Exception as e:
-        logger.error(f"Ajio error for {query}: {e}\n{traceback.format_exc()}")
+        logger.error(f"Ajio failed for {query} at {url}: {type(e).__name__} - {e}")
+        logger.error(traceback.format_exc())
     logger.info(f"Ajio results for {query}: {len(results)} items")
     return results
+
 # ---------------------- Send Email ----------------------
 def send_email(subject, content):
     logger.info(f"Preparing to send email: {subject}")
@@ -158,10 +168,19 @@ def send_email(subject, content):
         response = sg.send(message)
         logger.info(f"Email sent! Status code: {response.status_code}")
     except Exception as e:
-        import traceback
         logger.error("Error sending email: %s", traceback.format_exc())
         if hasattr(e, "body"):
             logger.error("SendGrid response body: %s", e.body)
+
+# ---------------------- Retry Wrapper ----------------------
+async def safe_scrape(scraper, name, query):
+    for attempt in range(3):
+        try:
+            return await scraper(query)
+        except Exception as e:
+            logger.error(f"{name} scrape attempt {attempt+1} failed for {query}: {e}")
+            await asyncio.sleep(3)
+    return [f"{name} failed after 3 retries."]
 
 # ---------------------- Main ----------------------
 async def main():
@@ -171,9 +190,9 @@ async def main():
         logger.info(f"Processing {query}")
         all_results += f"\n=== {query} ===\n"
 
-        flipkart = await scrape_flipkart(query)
-        myntra = await scrape_myntra(query)
-        ajio = await scrape_ajio(query)
+        flipkart = await safe_scrape(scrape_flipkart, "Flipkart", query)
+        myntra = await safe_scrape(scrape_myntra, "Myntra", query)
+        ajio = await safe_scrape(scrape_ajio, "Ajio", query)
 
         all_results += "Flipkart:\n" + "\n".join(flipkart) + "\n"
         all_results += "Myntra:\n" + "\n".join(myntra) + "\n"
