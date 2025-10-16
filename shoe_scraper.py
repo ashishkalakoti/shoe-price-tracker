@@ -21,11 +21,18 @@ logger = logging.getLogger(__name__)
 
 # ---------------------- Config ----------------------
 SHOES = [
-    "Asics Novablast", "Asics Gel-Nimbus", "Saucony Kinvara", "Saucony Tempus",
-    "Saucony Endorphin", "Brooks Ghost", "Brooks Adrenaline", "Brooks Glycerin",
-    "Hoka Arahi", "Hoka Skyflow"
+    "Asics Novablast",
+    "Asics Gel-Nimbus",
+    "Saucony Kinvara",
+    "Saucony Tempus",
+    "Saucony Endorphin",
+    "Saucony Triumph",
+    "Brooks Ghost",
+    "Brooks Adrenaline",
+    "Brooks Glycerin"
+    #"Hoka Arahi",
+    #"Hoka Skyflow"
 ]
-SIZES = ["UK 8", "UK 8.5", "UK 9"]
 
 EMAIL_FROM = "your_verified_sendgrid_email@example.com"
 EMAIL_TO = "your_gmail_here@gmail.com"
@@ -136,46 +143,6 @@ async def scrape_ajio(query):
         logger.error(f"Ajio error for {query}: {e}\n{traceback.format_exc()}")
     logger.info(f"Ajio results for {query}: {len(results)} items")
     return results
-
-# ---------------------- Amazon Scraper ----------------------
-async def scrape_amazon(query):
-    results = []
-    logger.info(f"Scraping Amazon for query: {query}")
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-
-            search_url = f"https://www.amazon.in/s?k={query.replace(' ', '+')}"
-            await page.goto(search_url, timeout=15000)
-
-            try:
-                await page.wait_for_selector("div.s-main-slot div[data-component-type='s-search-result']", timeout=10000)
-                products = page.locator("div.s-main-slot div[data-component-type='s-search-result']")
-                count = min(10, await products.count())
-
-                for i in range(count):
-                    try:
-                        title = await products.nth(i).locator("h2 a span").inner_text(timeout=1000)
-                        price_el = products.nth(i).locator("span.a-price span.a-offscreen")
-                        price = await price_el.inner_text(timeout=1000) if await price_el.count() else "Price not found"
-                        link_el = products.nth(i).locator("h2 a")
-                        link = "https://www.amazon.in" + await link_el.get_attribute("href", timeout=1000)
-                        results.append(f"{title} - {price} - {link}")
-                    except Exception:
-                        continue
-            except Exception as e_html:
-                content = await page.content()
-                if "captcha" in content.lower():
-                    results.append("Amazon blocked this request (CAPTCHA shown).")
-                else:
-                    results.append(f"Amazon failed: {type(e_html).__name__}")
-            await browser.close()
-    except Exception as e:
-        logger.error(f"Amazon error for {query}: {e}\n{traceback.format_exc()}")
-    logger.info(f"Amazon results for {query}: {len(results)} items")
-    return results
-
 # ---------------------- Send Email ----------------------
 def send_email(subject, content):
     logger.info(f"Preparing to send email: {subject}")
@@ -197,20 +164,17 @@ def send_email(subject, content):
 async def main():
     all_results = ""
     for shoe in SHOES:
-        for size in SIZES:
-            query = f"{shoe} {size}"
-            logger.info(f"Processing {query}")
-            all_results += f"\n=== {query} ===\n"
+        query = f"{shoe}"
+        logger.info(f"Processing {query}")
+        all_results += f"\n=== {query} ===\n"
 
-            flipkart = await scrape_flipkart(query)
-            myntra = await scrape_myntra(query)
-            ajio = await scrape_ajio(query)
-            amazon = await scrape_amazon(query)
+        flipkart = await scrape_flipkart(query)
+        myntra = await scrape_myntra(query)
+        ajio = await scrape_ajio(query)
 
-            all_results += "Flipkart:\n" + "\n".join(flipkart) + "\n"
-            all_results += "Myntra:\n" + "\n".join(myntra) + "\n"
-            all_results += "Ajio:\n" + "\n".join(ajio) + "\n"
-            all_results += "Amazon:\n" + "\n".join(amazon) + "\n"
+        all_results += "Flipkart:\n" + "\n".join(flipkart) + "\n"
+        all_results += "Myntra:\n" + "\n".join(myntra) + "\n"
+        all_results += "Ajio:\n" + "\n".join(ajio) + "\n"
 
     send_email("Daily Shoe Prices", all_results)
     logger.info("Workflow completed successfully.")
