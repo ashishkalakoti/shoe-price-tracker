@@ -156,9 +156,12 @@ def send_email(subject, content):
     try:
         sg = SendGridAPIClient(SENDGRID_API_KEY)
         response = sg.send(message)
-        logger.info(f"Email sent successfully! Status code: {response.status_code}")
+        logger.info(f"Email sent! Status code: {response.status_code}")
     except Exception as e:
-        logger.error(f"Error sending email: {e}\n{traceback.format_exc()}")
+        import traceback
+        logger.error("Error sending email: %s", traceback.format_exc())
+        if hasattr(e, "body"):
+            logger.error("SendGrid response body: %s", e.body)
 
 # ---------------------- Main ----------------------
 async def main():
