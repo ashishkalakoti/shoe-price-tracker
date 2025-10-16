@@ -34,8 +34,8 @@ SHOES = [
     #"Hoka Skyflow"
 ]
 
-EMAIL_FROM = "your_verified_sendgrid_email@example.com"
-EMAIL_TO = "your_gmail_here@gmail.com"
+EMAIL_FROM = "ashishkalakoti@gmail.com"
+EMAIL_TO = "ashishkalakoti@gmail.com"
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY")  # Set as secret in GitHub
 
 # ---------------------- Flipkart Scraper ----------------------
